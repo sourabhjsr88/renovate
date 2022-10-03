@@ -1,0 +1,89 @@
+FROM ubuntu:18.04
+
+WORKDIR /src
+
+RUN apt-get update -y && apt-get install -y curl expect jq iputils-ping software-properties-common && \
+    add-apt-repository ppa:git-core/ppa && apt-get update -y && apt-get install -y git ruby && gem install jwt
+
+
+RUN apt-get update && apt-get install -y wget gnupg2 --no-install-recommends \
+    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+    && apt-get update \
+    && apt-get install -y google-chrome-unstable \
+      --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /src/*.deb \
+    && apt-get update
+
+RUN mkdir actions-runner && cd actions-runner  && \
+curl -O -L https://github.com/actions/runner/releases/download/v2.297.0/actions-runner-linux-x64-2.297.0.tar.gz && \
+    tar xzf ./actions-runner-linux-x64-2.297.0.tar.gz && \
+    useradd -m ubuntu && \
+    chown -R ubuntu:ubuntu /src
+
+RUN apt-get update -y && apt-get install -y lsb-release software-properties-common apt-transport-https ca-certificates && \
+    curl -fsSL https://apt.releases.hashicorp.com/gpg | apt-key add - && \
+    apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main" && \
+    apt-get update -y && apt-get install -y jq imagemagick
+
+RUN apt-get install -y apt-transport-https ca-certificates gnupg lsb-release && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+    $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+    apt-get update -y && apt-get install -y sudo docker-ce docker-ce-cli containerd.io
+
+RUN curl -L https://github.com/robertlestak/tknwatch/releases/download/v0.0.1/tknwatch -o /bin/tknwatch && chmod +x /bin/tknwatch && \
+    curl -L https://github.com/robertlestak/yv/releases/download/v0.0.1/yv_linux -o /bin/yv && chmod +x /bin/yv
+
+#### PLAYWRIGHT #####
+# === INSTALL Node.js ===
+
+# Install node14
+RUN apt-get update && apt-get install -y curl && \
+    curl -sL https://deb.nodesource.com/setup_14.x | bash - && \
+    apt-get install -y nodejs
+
+# Feature-parity with node.js base images.
+RUN apt-get update && apt-get install -y --no-install-recommends git ssh && \
+    npm install -g yarn
+
+# Install Python 3.8
+
+RUN apt-get update && apt-get install -y python3.8 python3-pip xvfb && \
+    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1 && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3 1 && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
+
+# Install AWC CLI v2
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    sudo ./aws/install
+
+# install gcloud CLI
+RUN apt-get install -y \
+    apt-transport-https \
+    ca-certificates \
+    software-properties-common
+
+RUN export CLOUD_SDK_REPO="cloud-sdk-$(lsb_release -c -s)" && \
+    echo "deb http://packages.cloud.google.com/apt $CLOUD_SDK_REPO main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
+    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - && \
+    apt-get update -y && apt-get install -y google-cloud-sdk
+
+COPY entrypoint /opt/entrypoint
+
+WORKDIR /src/actions-runner
+
+COPY configexpect configexpect
+COPY configexpect-repo configexpect-repo
+COPY scripts scripts
+
+RUN ./bin/installdependencies.sh
+
+RUN groupmod -g 992 -o docker
+RUN usermod -aG docker ubuntu
+
+USER ubuntu
+
+ENTRYPOINT ["/opt/entrypoint"]
